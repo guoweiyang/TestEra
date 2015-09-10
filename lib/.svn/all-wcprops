@@ -1,0 +1,23 @@
+K 25
+svn:wc:ra_dav:version-url
+V 45
+/repository/tools/!svn/ver/23/TestEra_0.1/lib
+END
+alloy4.jar
+K 25
+svn:wc:ra_dav:version-url
+V 56
+/repository/tools/!svn/ver/23/TestEra_0.1/lib/alloy4.jar
+END
+--alloy4.2-rc.jar
+K 25
+svn:wc:ra_dav:version-url
+V 63
+/repository/tools/!svn/ver/23/TestEra_0.1/lib/--alloy4.2-rc.jar
+END
+log4j-1.2.16.jar
+K 25
+svn:wc:ra_dav:version-url
+V 62
+/repository/tools/!svn/ver/23/TestEra_0.1/lib/log4j-1.2.16.jar
+END

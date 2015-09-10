@@ -1,0 +1,460 @@
+package edu.utexas.testera.translator;
+
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.Set;
+
+import org.apache.log4j.Logger;
+
+import edu.mit.csail.sdg.alloy4.Err;
+import edu.mit.csail.sdg.alloy4compiler.ast.Expr;
+import edu.mit.csail.sdg.alloy4compiler.ast.Sig;
+import edu.mit.csail.sdg.alloy4compiler.ast.Sig.PrimSig;
+import edu.utexas.testera.alloyComponents.AlloyModel;
+import edu.utexas.testera.alloyComponents.Signature;
+import edu.utexas.testera.alloyComponents.StateAlloyModel;
+import edu.utexas.testera.annotations.TestEra;
+import edu.utexas.testera.utils.Support;
+
+import static edu.utexas.testera.utils.Constants.*;
+
+public class JavaToAlloy {
+	static Logger logger = Logger.getLogger(JavaToAlloy.class.getName());
+
+	private boolean recursiveTranslation = true;
+	private boolean includeClassInvariants = true;
+	private boolean includeFinalFields = false;
+	private boolean includePrivateFields = true;
+	private boolean includeStates = true;
+	private StateAlloyModel stateModel = new StateAlloyModel(); 
+	private Set<String> fieldNames = new HashSet<String>();
+	Set<AlloyModel> alloyModels = new HashSet<AlloyModel>();
+	
+	/**
+	 * Whether to recursively translate referenced types or not
+	 * @param recursiveTranslation the recursiveTranslation to set
+	 */
+	public void setRecursiveTranslation(boolean recursiveTranslation) {
+		this.recursiveTranslation = recursiveTranslation;
+	}
+	/**
+	 * @return the recursiveTranslation
+	 */
+	public boolean isRecursiveTranslation() {
+		return recursiveTranslation;
+	}
+	/**
+	 * Whether to include class invariants (in the annotations) while 
+	 * translating or not
+	 * @param includeClassInvariants the includeClassInvariants to set
+	 */
+	public void setIncludeClassInvariants(boolean includeClassInvariants) {
+		this.includeClassInvariants = includeClassInvariants;
+	}
+	/**
+	 * @return the includeClassInvariants
+	 */
+	public boolean isIncludeClassInvariants() {
+		return includeClassInvariants;
+	}
+	/**
+	 * Whether to include "final" access referenced fields in the translation 
+	 * to Alloy or not. Usually these fields are statically assigned, so the 
+	 * default is set to false. If set to true, the field will be treated as a 
+	 * class private field.
+	 * @param includeFinal the includeFinal to set
+	 */
+	public void setIncludeFinal(boolean includeFinal) {
+		this.includeFinalFields = includeFinal;
+	}
+	/**
+	 * @return the includeFinal
+	 */
+	public boolean isIncludeFinal() {
+		return includeFinalFields;
+	}
+	/**
+	 * Whether to include public access referenced fields in the translation to
+	 * Alloy or not.
+	 * @param includePrivateFields the includePrivateFields to set
+	 */
+	public void setIncludePrivateFields(boolean includePrivateFields) {
+		this.includePrivateFields = includePrivateFields;
+	}
+	/**
+	 * @return the includePrivateFields
+	 */
+	public boolean isIncludePrivateFields() {
+		return includePrivateFields;
+	}
+	/**
+	 * Whether to add a state relation to fields (pre and post states) in the 
+	 * translation to Alloy.
+	 * @param includeStates the includeStates to set
+	 */
+	public void setIncludeStates(boolean includeStates) {
+		this.includeStates = includeStates;
+	}
+	/**
+	 * @return the includeStates
+	 */
+	public boolean isIncludeStates() {
+		return includeStates;
+	}
+	/**
+	 * Translates a Java class into Alloy representation. A recursive field 
+	 * type translation is done if enabled. 
+	 * @param clazz Class to translate into Alloy.
+	 * @return Set of Alloy models representing the Java class and each 
+	 * referenced type in the class if recursiveTranslation is enabled.
+	 */
+	public Set<AlloyModel> translateClassToAlloy(Class clazz) {
+		Set<AlloyModel> models = translateClasses2Sigs(clazz, null);
+		return models;
+	}	
+	/**
+	 * Translates a Java class into Alloy representation. A recursive field 
+	 * type translation is done if enabled.
+	 * In addition, method parameter types are translated. 
+	 * @param className
+	 * @param methodName
+	 * @return Set of Alloy models representing the Java class and each 
+	 * referenced type in the class if recursiveTranslation is enabled 
+	 * and each type of the method parameters.
+	 */
+	public  Set<AlloyModel> translateClasses2Sigs(Class clazz, Method method) {
+		logger.debug("translating class " + clazz +" with method " + method + " into Alloy");
+		LinkedList<Class> workList = new LinkedList<Class>();
+		HashSet<Class> visited = new HashSet<Class>();
+		
+		//add the main class to the worklist
+		workList.add(clazz);
+		//if method != null,add the method's parameters types to the worklist
+		addMethodParameterTypes(method, workList, visited);
+		
+		Class c;
+		while (!workList.isEmpty()) {
+			c = workList.removeFirst();
+			visited.add(c);
+			// check if c is an Alloy primitive type (so we can ignore)
+			logger.debug("check if " + c + " is primitive alloy type");
+			if (Support.isAlloyPrimitive(c)) {
+				continue;
+			}
+			//check if class is disabled in TestEra annotation
+			logger.debug("check if " + c + " is disabled with TestEra annotations");
+			if (isClassDisabled(c)) {
+				continue;
+			}			
+			// create a new Alloy model for this class
+			AlloyModel model = new AlloyModel();
+			// create a signature representation of the class
+			model.addSigDeclaration(c);
+			model.setModuleName(c.getName());
+			// add class invariants to the signature created
+			if (includeClassInvariants) addClassInvariants(model, c);
+			alloyModels.add(model);
+		
+			//add inner classes to worklist
+			addInnerClasses(c, workList, visited);
+			//add field types to worklist
+			if (recursiveTranslation) addFieldTypes(c, model, workList, visited);
+		}
+		// we need to call this at this stage after fieldNames has been fully 
+		// created by traversing all classes
+		translateFields2Relations();
+		if (includeStates)
+			updatePrePostofInvariants();
+		return alloyModels;
+	}
+	/**
+	 * Checks if the class has a TestEra annotations with isEnabled = false
+	 * @param c
+	 * @return
+	 */
+	private boolean isClassDisabled(Class c) {
+		Annotation ann = c.getAnnotation(TestEra.class);
+		if (ann!=null) {
+			TestEra t = (TestEra)ann;
+			return !t.isEnabled();
+		}
+		return false;
+	}
+	/**
+	 * Checks if the field has a TestEra annotations with isEnabled = false
+	 * @param field
+	 * @return
+	 */
+	private boolean isFieldDisabled(Field f) {
+		Annotation ann = f.getAnnotation(TestEra.class);
+		if (ann!=null) {
+			//check is isEnabled is false meaning that this field should 
+			//be ignored while translating it into the alloy model
+			//this only applies to this field, other fields with same type 
+			//might force the translation of its type
+			TestEra t = (TestEra)ann;
+			return !t.isEnabled();
+		}
+		return false;
+	}
+	/**
+	 * Adds the parameters types of the method to the worklist of classes if 
+	 * they were not visited (ie. not in the visited set). 
+	 * @param method
+	 * @param workList
+	 * @param visited
+	 */
+	private void addMethodParameterTypes(Method method, 
+			LinkedList<Class> workList, HashSet<Class> visited) {
+		if (method == null) return;
+		for (Class argType : method.getParameterTypes()) {
+			if (argType.isArray())
+				argType = argType.getComponentType();
+			if (!visited.contains(argType) && !workList.contains(argType)) {
+				workList.add(argType);
+			}
+		}
+	}
+	/**
+	 * Adds the class invariants to the signature representing it.
+	 * The invariants are in the TestEra.facts annotation element.
+	 * @param c
+	 * @param model
+	 */
+	public void addClassInvariants(AlloyModel model, Class c) {
+		Signature s = model.getSig(c.getName());
+		Annotation ann = c.getAnnotation(TestEra.class);
+		if (ann!=null) {
+			TestEra t = (TestEra)ann;
+			//read the invariants and assign them to the corresponding sig
+			String[] facts = t.invariants();
+
+			if (facts!=null && facts.length!=0) {
+				s.setFacts(facts);
+			}
+		}
+	}
+	
+	private void updatePrePostofInvariants(){
+		for (AlloyModel model : alloyModels) { 
+			for (Signature s : model.getSigs().values()){
+				String[] facts =s.getFacts();
+				if (facts!=null && facts.length!=0) {
+					String[] updatedFacts = new String[facts.length];
+					if (includeStates) {
+						for(int i=0; i<facts.length; i++){
+							facts[i] = JavaToAlloy.updatePrePost(fieldNames, facts[i], 0);
+						}
+						// This is only ncessary if the State sig includes post state during Pre state input generation
+						/*updatedFacts = new String[2*facts.length];
+						for(int i=0; i<facts.length; i++){
+							updatedFacts[i] = JavaToAlloy.updatePrePost(fieldNames, facts[i], 0);
+							updatedFacts[facts.length + i] = JavaToAlloy.updatePrePost(fieldNames, facts[i], 1);
+						}
+						s.setFacts(updatedFacts);*/
+					}
+				}
+			}
+		}
+	}
+	
+	/**
+	 * Adds the types of the class fields into the worklist to be translated 
+	 * to Alloy.
+	 * @param c
+	 * @param workList
+	 * @param visited
+	 */
+	private void addFieldTypes(Class c, AlloyModel model, 
+			LinkedList<Class> workList,	HashSet<Class> visited) {
+		for(Field f: c.getDeclaredFields()) {
+			if (isFieldDisabled(f)) continue;
+			int fieldMod = f.getModifiers();
+			if ((!includePrivateFields && fieldMod == Modifier.PRIVATE)
+				|| (!includeFinalFields && fieldMod == Modifier.FINAL)) {
+				continue;
+			}
+			Class fieldClass = f.getType();
+			if (fieldClass.isArray())
+				fieldClass = fieldClass.getComponentType();
+			//add the type of the field to the worklist 
+			if (!visited.contains(fieldClass) && 
+					!workList.contains(fieldClass)){
+				workList.add(fieldClass);
+			}
+		}
+	}
+	/**
+	 * Adds the inner class declarations of the main Class c into the 
+	 * worklist to be translated into Alloy
+	 * @param c
+	 * @param workList
+	 * @param visited
+	 */
+	private void addInnerClasses(Class c, LinkedList<Class> workList, 
+			HashSet<Class> visited) {
+		for(Class inner: c.getDeclaredClasses()) {
+			if (!visited.contains(inner) && !workList.contains(inner))
+				workList.add(inner);
+		}
+	}
+	public void translateFields2Relations() {
+		Sig stateSig = stateModel.getSig(stateSigName).getSig();
+		if (includeStates) {
+			alloyModels.add(stateModel);
+		}
+		HashMap<String, Signature> allSigs = new HashMap<String, Signature>();
+		for (AlloyModel model : alloyModels) {
+			allSigs.putAll(model.getSigs());
+		}
+			
+		for (AlloyModel model : alloyModels) {
+			HashMap<String, Signature> sigs = model.getSigs();
+			for(Signature s: sigs.values()) {
+				Class c = s.getClassDef();
+				if (c==null) continue;
+				for(Field f: c.getDeclaredFields()) {
+					if (isFieldDisabled(f)) continue;
+					Class fieldClass = f.getType();
+					if (fieldClass.isArray())
+						fieldClass = fieldClass.getComponentType();
+					
+					if (includeStates) {
+						model.addDependency(stateModel.getModuleName());
+					}
+					
+					Sig sourceSig = s.getSig();
+					String fieldName = f.getName();
+					
+					// TODO: fieldName set
+					fieldNames.add(fieldName);
+					
+					Sig fieldSig;
+					//if the field is primitive type then the relation is with a
+					//primitive sig and not with one of the declared sigs
+					 if (Support.isAlloyPrimitive(fieldClass)) {
+						try {
+							fieldSig = model.getAlloyPrimitiveSig(fieldClass);
+							if (includeStates) {
+								sourceSig.addField(fieldName, fieldSig.one_arrow_any(stateSig));
+							}
+							else {
+								sourceSig.addField(fieldName, fieldSig.oneOf());
+							}
+						}catch (Exception e) {
+							logger.error("Could not create relation:" + f.getName() +" in signature:" +s.getClassName());
+							logger.error("It can be that the sig for the field type has not been created.");
+							logger.error(e);
+						}
+					}
+					//the field is not a primitive type then we need to make the relation with another sig object in the sigs set
+					//this relation is LONE 
+					else {
+						try {
+							if (allSigs.get(fieldClass.getName())==null) {
+								logger.error("The signature for " + fieldClass.getName() +" is not defined, so we can nnot create the relation for " + fieldName);
+								continue;
+							}
+							fieldSig = allSigs.get(fieldClass.getName()).getSig();
+							model.addDependency(fieldClass.getName());
+							if (includeStates) {
+								sourceSig.addField(fieldName, fieldSig.lone_arrow_any(stateSig));
+							}
+							else {
+								sourceSig.addField(fieldName, fieldSig.loneOf());
+							}
+							
+						} catch (Exception e) {
+							logger.error("Could not create relation: " + f.getName() +" in signature:"  +s.getClassName());
+							logger.error(e);
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	/**
+	 * translate a user-specified constraint to constraint used by TestEra
+	 * e.g., abc' => (abc.post), 
+	 * 		 state == 0 => def => (def.pre)
+	 * 		 state == 1 => def => (def.post)	 
+	 * @param fields
+	 * @param constraint
+	 * @return
+	 */
+	public static String updatePrePost(Set<String> fields, String constraint, int state){
+		StringBuilder sb =  new StringBuilder();
+		StringBuilder cur = new StringBuilder();
+		String replacement;
+		String st = constraint.trim();
+		int start = 0;
+		if(state==0){
+			replacement = preSigName;
+		}else{
+			replacement = postSigName;
+		}
+		while(start < st.length()){
+			char c = st.charAt(start);
+			if(!isSpecial(c))
+				cur.append(c);
+			if(isSpecial(c) || start == st.length()-1){
+				String s = cur.toString();
+				cur = new StringBuilder();
+				if(s.endsWith("`")){ //post
+					String name = s.substring(0, s.length()-1);
+					if(fields.contains(name)){
+						sb.append("(" + name + "." + postSigName + ")");
+					}
+				}else if(fields.contains(s)){ //other, depending on the state
+					String name = s;
+					sb.append("(" + name + "." + replacement + ")");
+				}else if(s.equals(resultSigNameFromUser)){
+					String name = resultSigNameInAlloy;
+					sb.append(name);
+				}else{
+					sb.append(s);
+				}
+				
+				cur = new StringBuilder();
+				if (start != st.length()-1 || isSpecial(c))
+					sb.append(c);
+			}
+			start++;
+		}
+		return sb.toString();
+	}
+	
+	
+	
+
+	/**
+	 * check if ch is a special character used in Alloy
+	 * @param ch
+	 * @return
+	 */
+	//TODO
+	public static boolean isSpecial(char ch){
+		if (ch==' ' || ch=='#' || ch=='*' || ch=='^' || ch=='=' || ch=='(' || ch==')' 
+			|| ch=='|' || ch=='[' || ch==']' || ch=='{' || ch=='}' || ch=='>' 
+			|| ch=='<' || ch=='!' || ch=='.'){
+			return true;
+		}else{
+			return false;
+		}
+	}
+	
+	public Set<String> getFieldNames() {
+		return fieldNames;
+	}
+	public void setFieldNames(Set<String> fieldNames) {
+		this.fieldNames = fieldNames;
+	}
+}

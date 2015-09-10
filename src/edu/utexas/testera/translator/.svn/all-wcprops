@@ -1,0 +1,29 @@
+K 25
+svn:wc:ra_dav:version-url
+V 76
+/repository/tools/!svn/ver/115/TestEra_0.1/src/edu/utexas/testera/translator
+END
+JavaToAlloy.java
+K 25
+svn:wc:ra_dav:version-url
+V 93
+/repository/tools/!svn/ver/112/TestEra_0.1/src/edu/utexas/testera/translator/JavaToAlloy.java
+END
+AlloyTestGenerator.java
+K 25
+svn:wc:ra_dav:version-url
+V 100
+/repository/tools/!svn/ver/115/TestEra_0.1/src/edu/utexas/testera/translator/AlloyTestGenerator.java
+END
+Instance2Java.java
+K 25
+svn:wc:ra_dav:version-url
+V 94
+/repository/tools/!svn/ver/89/TestEra_0.1/src/edu/utexas/testera/translator/Instance2Java.java
+END
+StateManager.java
+K 25
+svn:wc:ra_dav:version-url
+V 94
+/repository/tools/!svn/ver/112/TestEra_0.1/src/edu/utexas/testera/translator/StateManager.java
+END
